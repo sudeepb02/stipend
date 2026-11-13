@@ -70,16 +70,16 @@ impl Stipend {
 mod tests {
     use super::*;
     use crate::testing::{
-        BLOCK_TIME_SEC, CONTRACT_ID, NO_DEPOSIT, ONE_YOCTO, ORACLE_ID, call_as, new_contract,
+        AGENT_ID, BLOCK_TIME_SEC, CONTRACT_ID, JOB_ID, NO_DEPOSIT, ONE_YOCTO, ORACLE_ID, SEAT_ID,
+        call_as, new_contract,
     };
 
-    const AGENT_ID: &str = "agent.testnet";
     const SESSION_SEC: u64 = 3_600;
 
     fn session_until(expires_at: u64) -> Session {
         Session {
-            job_id: "job-1".to_string(),
-            seat_id: "7".to_string(),
+            job_id: JOB_ID.to_string(),
+            seat_id: SEAT_ID.to_string(),
             expires_at: U64(expires_at),
         }
     }

@@ -2,6 +2,7 @@ pub mod asset;
 pub mod budget;
 pub mod eip3009;
 pub mod hex;
+pub mod payment;
 pub mod session;
 #[cfg(test)]
 mod testing;
@@ -15,6 +16,7 @@ use near_sdk::{
     AccountId, Gas, NearToken, PanicOnDefault, Promise, assert_one_yocto, env, near, require,
     serde_json,
 };
+use payment::{Payment, Share};
 use session::Session;
 
 // Secp256k1 key domain of the MPC signer
@@ -72,6 +74,10 @@ pub struct Stipend {
     // Budget ids of each job
     job_budgets: LookupMap<String, Vec<u64>>,
     next_budget_id: u64,
+    // Share of each seat in a budget, by budget id and seat id
+    shares: LookupMap<(u64, String), Share>,
+    // Payment log, by budget id and index in the budget
+    payments: LookupMap<(u64, u32), Payment>,
 }
 
 #[near]
@@ -100,6 +106,8 @@ impl Stipend {
             budgets: LookupMap::new(b"b"),
             job_budgets: LookupMap::new(b"j"),
             next_budget_id: 0,
+            shares: LookupMap::new(b"h"),
+            payments: LookupMap::new(b"p"),
         }
     }
 

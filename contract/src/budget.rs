@@ -20,6 +20,12 @@ pub struct Budget {
     pub expires_at: U64,
     // Unix time in seconds when the funder closed the budget early
     pub closed_at: Option<U64>,
+    // Sum of the shares reserved for seats
+    pub reserved_total: U128,
+    // Sum of the payments signed for all seats
+    pub spent_total: U128,
+    // Number of payments in the budget's log
+    pub payment_count: u32,
 }
 
 // Spending limits in the token's smallest unit
@@ -90,6 +96,9 @@ impl Stipend {
             payees,
             expires_at,
             closed_at: None,
+            reserved_total: U128(0),
+            spent_total: U128(0),
+            payment_count: 0,
         };
         self.budgets.insert(budget_id, budget);
         // Writes the new entries now, so their storage can be measured
@@ -153,33 +162,11 @@ fn charge_storage(bytes_used: u64) {
 mod tests {
     use super::*;
     use crate::testing::{
-        BLOCK_TIME_SEC, NO_DEPOSIT, ONE_YOCTO, USDC_ASSET_ID, call_as, contract_with_usdc,
+        BLOCK_TIME_SEC, FUNDER_ID, NO_DEPOSIT, ONE_YOCTO, PAYEE, STORAGE_DEPOSIT, call_as,
+        contract_with_usdc, create_budget, sample_budget,
     };
-    use near_sdk::NearToken;
     use near_sdk::mock::MockAction;
     use near_sdk::test_utils::get_created_receipts;
-
-    const FUNDER_ID: &str = "funder.testnet";
-    const PAYEE: &str = "0x9081F51AD866C6d4c6F7Ad758Dea7FC43a7649e6";
-    // More than a budget needs for storage
-    const STORAGE_DEPOSIT: NearToken = NearToken::from_millinear(100);
-
-    // 0.5 USDC for a job, at most 0.25 per agent and 0.01 per payment, open for a day
-    fn sample_budget() -> Budget {
-        Budget {
-            job_id: "job-1".to_string(),
-            funder: FUNDER_ID.parse().unwrap(),
-            asset_id: USDC_ASSET_ID.to_string(),
-            limits: BudgetLimits {
-                total: U128(500_000),
-                per_agent_cap: U128(250_000),
-                per_payment_max: U128(10_000),
-            },
-            payees: Some(vec![PAYEE.to_string()]),
-            expires_at: U64(BLOCK_TIME_SEC + 86_400),
-            closed_at: None,
-        }
-    }
 
     // Contract with USDC registered, whose next calls come from the funder with a storage deposit
     fn contract_for_funder() -> Stipend {
@@ -188,20 +175,10 @@ mod tests {
         contract
     }
 
-    fn create(contract: &mut Stipend, budget: Budget) -> U64 {
-        contract.create_task_budget(
-            budget.job_id,
-            budget.asset_id,
-            budget.limits,
-            budget.payees,
-            budget.expires_at,
-        )
-    }
-
     // Funder's contract with the sample budget created and the next call from the funder with 1 yoctoNEAR
     fn contract_with_budget() -> Stipend {
         let mut contract = contract_for_funder();
-        create(&mut contract, sample_budget());
+        create_budget(&mut contract, sample_budget());
         call_as(FUNDER_ID, ONE_YOCTO);
         contract
     }
@@ -209,7 +186,7 @@ mod tests {
     #[test]
     fn create_task_budget_stores_the_budget() {
         let mut contract = contract_for_funder();
-        assert_eq!(create(&mut contract, sample_budget()), U64(0));
+        assert_eq!(create_budget(&mut contract, sample_budget()), U64(0));
         assert_eq!(contract.get_budget(U64(0)), Some(sample_budget()));
     }
 
@@ -218,18 +195,18 @@ mod tests {
         let mut contract = contract_for_funder();
         let mut budget = sample_budget();
         budget.payees = None;
-        create(&mut contract, budget.clone());
+        create_budget(&mut contract, budget.clone());
         assert_eq!(contract.get_budget(U64(0)), Some(budget));
     }
 
     #[test]
     fn create_task_budget_lists_budgets_by_job() {
         let mut contract = contract_for_funder();
-        create(&mut contract, sample_budget());
+        create_budget(&mut contract, sample_budget());
         let mut other_job = sample_budget();
         other_job.job_id = "job-2".to_string();
-        create(&mut contract, other_job);
-        create(&mut contract, sample_budget());
+        create_budget(&mut contract, other_job);
+        create_budget(&mut contract, sample_budget());
         assert_eq!(
             contract.get_budgets_for_job("job-1".to_string()),
             vec![U64(0), U64(2)]
@@ -245,7 +222,7 @@ mod tests {
     fn create_task_budget_refunds_the_unused_deposit() {
         let mut contract = contract_for_funder();
         let storage_before = env::storage_usage();
-        create(&mut contract, sample_budget());
+        create_budget(&mut contract, sample_budget());
         let bytes_used = env::storage_usage() - storage_before;
         let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(bytes_used));
 
@@ -264,7 +241,7 @@ mod tests {
     fn create_task_budget_requires_a_storage_deposit() {
         let mut contract = contract_with_usdc();
         call_as(FUNDER_ID, ONE_YOCTO);
-        create(&mut contract, sample_budget());
+        create_budget(&mut contract, sample_budget());
     }
 
     #[test]
@@ -272,7 +249,7 @@ mod tests {
     fn create_task_budget_rejects_an_unknown_asset() {
         let mut budget = sample_budget();
         budget.asset_id = "unknown".to_string();
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -280,7 +257,7 @@ mod tests {
     fn create_task_budget_rejects_zero_amounts() {
         let mut budget = sample_budget();
         budget.limits.per_payment_max = U128(0);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -288,7 +265,7 @@ mod tests {
     fn create_task_budget_rejects_a_payment_max_above_the_cap() {
         let mut budget = sample_budget();
         budget.limits.per_payment_max = U128(250_001);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -296,7 +273,7 @@ mod tests {
     fn create_task_budget_rejects_a_cap_above_the_total() {
         let mut budget = sample_budget();
         budget.limits.per_agent_cap = U128(500_001);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -304,7 +281,7 @@ mod tests {
     fn create_task_budget_rejects_a_past_end() {
         let mut budget = sample_budget();
         budget.expires_at = U64(BLOCK_TIME_SEC);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -312,7 +289,7 @@ mod tests {
     fn create_task_budget_rejects_an_empty_payee_list() {
         let mut budget = sample_budget();
         budget.payees = Some(vec![]);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -320,7 +297,7 @@ mod tests {
     fn create_task_budget_rejects_too_many_payees() {
         let mut budget = sample_budget();
         budget.payees = Some(vec![PAYEE.to_string(); MAX_PAYEES + 1]);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
@@ -328,7 +305,7 @@ mod tests {
     fn create_task_budget_rejects_a_malformed_payee() {
         let mut budget = sample_budget();
         budget.payees = Some(vec!["0x9081F51A".to_string()]);
-        create(&mut contract_for_funder(), budget);
+        create_budget(&mut contract_for_funder(), budget);
     }
 
     #[test]
