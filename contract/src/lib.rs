@@ -10,7 +10,6 @@ mod testing;
 
 use asset::Asset;
 use budget::Budget;
-use eip3009::{TokenDomain, TransferArgs};
 use near_sdk::state::ContractState;
 use near_sdk::store::LookupMap;
 use near_sdk::{AccountId, PanicOnDefault, Promise, assert_one_yocto, env, near, require};
@@ -20,9 +19,6 @@ use session::Session;
 // Longest validity of a signed payment, and longest agent session
 const MAX_WINDOW_SEC: u32 = 900;
 const MAX_SESSION_SEC: u32 = 21_600;
-// USDC on Base Sepolia
-const USDC_ADDRESS: &str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
-const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
 
 // Accounts the contract trusts, and limits for payments and sessions
 #[near(serializers = [json, borsh])]
@@ -102,16 +98,6 @@ impl Stipend {
     pub fn get_config(&self) -> Config {
         self.config.clone()
     }
-
-    // Asks the MPC network to sign a USDC transfer from the address of a wallet path
-    pub fn sign_transfer(&mut self, path: String, transfer: TransferArgs) -> Promise {
-        require!(
-            env::predecessor_account_id() == env::current_account_id(),
-            "Only the contract account can request signatures"
-        );
-        let digest = eip3009::transfer_digest(&base_sepolia_usdc(), &transfer.parse());
-        mpc::request_signature(self.config.mpc_signer_id.clone(), path, &digest)
-    }
 }
 
 impl Stipend {
@@ -154,15 +140,6 @@ fn charge_storage(bytes_used: u64) {
     }
 }
 
-fn base_sepolia_usdc() -> TokenDomain {
-    TokenDomain {
-        name: "USDC".to_string(),
-        version: "2".to_string(),
-        chain_id: BASE_SEPOLIA_CHAIN_ID,
-        token: hex::decode_fixed(USDC_ADDRESS).unwrap(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,21 +147,6 @@ mod tests {
         CONTRACT_ID, MPC_SIGNER_ID, NO_DEPOSIT, ONE_YOCTO, ORACLE_ID, call_as, init_contract,
         new_contract,
     };
-    use near_sdk::json_types::{U64, U128};
-    use near_sdk::mock::MockAction;
-    use near_sdk::serde_json::{self, Value};
-    use near_sdk::test_utils::get_created_receipts;
-
-    fn sample_transfer() -> TransferArgs {
-        TransferArgs {
-            from: "0x90a9d41B34E0D076EB65D7A0D547f34d4beFECdF".to_string(),
-            to: "0x9081F51AD866C6d4c6F7Ad758Dea7FC43a7649e6".to_string(),
-            value: U128(10_000),
-            valid_after: U64(0),
-            valid_before: U64(1_794_560_000),
-            nonce: "0x0102030405060708091011121314151617181920212223242526272829303132".to_string(),
-        }
-    }
 
     #[test]
     fn new_sets_accounts_and_limits() {
@@ -243,52 +205,5 @@ mod tests {
     #[test]
     fn ping_returns_contract_name() {
         assert_eq!(new_contract().ping(), "stipend");
-    }
-
-    #[test]
-    fn sign_transfer_calls_mpc_with_the_transfer_digest() {
-        let _ = new_contract().sign_transfer("budget/0".to_string(), sample_transfer());
-
-        let receipts = get_created_receipts();
-        assert_eq!(receipts.len(), 1);
-        assert_eq!(receipts[0].receiver_id.as_str(), MPC_SIGNER_ID);
-        let MockAction::FunctionCallWeight {
-            method_name,
-            args,
-            attached_deposit,
-            prepaid_gas,
-            ..
-        } = &receipts[0].actions[0]
-        else {
-            panic!("expected a function call");
-        };
-        assert_eq!(method_name.as_slice(), b"sign");
-        assert_eq!(*attached_deposit, mpc::SIGN_DEPOSIT);
-        assert_eq!(*prepaid_gas, mpc::SIGN_GAS);
-
-        let sent: Value = serde_json::from_slice(args).unwrap();
-        // Digest of the same fields from viem hashTypedData
-        assert_eq!(
-            sent["request"]["payload_v2"]["Ecdsa"],
-            "6e383c6419ff701e12ac63761147863c4c6aae757b78a42fa16fd02bfbd92168"
-        );
-        assert_eq!(sent["request"]["path"], "budget/0");
-        assert_eq!(sent["request"]["domain_id"], 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "Only the contract account can request signatures")]
-    fn sign_transfer_rejects_other_callers() {
-        let mut contract = new_contract();
-        call_as("someone.testnet", NO_DEPOSIT);
-        let _ = contract.sign_transfer("budget/0".to_string(), sample_transfer());
-    }
-
-    #[test]
-    #[should_panic(expected = "from must be 0x hex of 20 bytes")]
-    fn sign_transfer_rejects_malformed_addresses() {
-        let mut transfer = sample_transfer();
-        transfer.from = "0x1234".to_string();
-        let _ = new_contract().sign_transfer("budget/0".to_string(), transfer);
     }
 }

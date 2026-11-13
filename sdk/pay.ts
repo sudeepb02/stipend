@@ -1,18 +1,13 @@
-// Requests MPC signatures for USDC transfers through the Stipend contract
+// Pays from a Stipend budget: the contract checks the payment rules and returns the MPC signature
 import { createHash } from "node:crypto";
 import { actions, baseEncode, getTransactionLastResult, type Account } from "near-api-js";
 import type { Hex } from "viem";
 
-const CALL_GAS = 100_000_000_000_000n;
+// Covers pay, the MPC sign call (30 Tgas) and the callback that returns the signature
+const PAY_GAS = 100_000_000_000_000n;
+// 0.01 NEAR for the storage a payment uses, the contract refunds the rest
+const STORAGE_DEPOSIT = 10_000_000_000_000_000_000_000n;
 const STATUS_ATTEMPTS = 10;
-
-// Token domain the contract signs transfers for: USDC on Base Sepolia
-export const BASE_SEPOLIA_USDC = {
-  name: "USDC",
-  version: "2",
-  chainId: 84532,
-  verifyingContract: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-} as const;
 
 // Transfer fields as the contract reads them: addresses and nonce in 0x hex, numbers as strings
 export type TransferFields = {
@@ -24,21 +19,23 @@ export type TransferFields = {
   nonce: string;
 };
 
-export type SignedTransfer = { signature: Hex; transactionHash: string };
+export type SignedPayment = { signature: Hex; transactionHash: string };
 
 type TransactionOutcome = Awaited<ReturnType<Account["provider"]["viewTransactionStatus"]>>;
-type MpcSignature = { big_r: { affine_point: string }; s: { scalar: string }; recovery_id: number };
 
-// Sends one sign_transfer call and returns the EVM signature from the MPC reply
-export async function signTransfer(
+// Sends one pay call from a session account and returns the EVM signature of the transfer
+export async function payFromBudget(
   account: Account,
   contractId: string,
-  path: string,
+  budgetId: string,
   transfer: TransferFields,
-): Promise<SignedTransfer> {
+  resource: string,
+): Promise<SignedPayment> {
   const signedTx = await account.createSignedTransaction({
     receiverId: contractId,
-    actions: [actions.functionCall("sign_transfer", { path, transfer }, CALL_GAS, 0n)],
+    actions: [
+      actions.functionCall("pay", { budget_id: budgetId, transfer, resource }, PAY_GAS, STORAGE_DEPOSIT),
+    ],
   });
   const transactionHash = baseEncode(createHash("sha256").update(signedTx.transaction.encode()).digest());
   await account.provider.sendTransactionUntil(signedTx, "INCLUDED");
@@ -46,18 +43,12 @@ export async function signTransfer(
   if (typeof outcome.status === "object" && outcome.status !== null && "Failure" in outcome.status) {
     throw new Error(`Transaction ${transactionHash} failed: ${JSON.stringify(outcome.status.Failure)}`);
   }
-  const signature = toEvmSignature(getTransactionLastResult(outcome) as MpcSignature);
-  return { signature, transactionHash };
-}
-
-// r is the x coordinate of big_r: bytes 1..33 of its compressed form
-function toEvmSignature(mpcSignature: MpcSignature): Hex {
-  const r = mpcSignature.big_r.affine_point.slice(2);
-  const s = mpcSignature.s.scalar;
-  if (r.length !== 64 || s.length !== 64) {
-    throw new Error(`Unexpected MPC signature: ${JSON.stringify(mpcSignature)}`);
+  // The contract returns null when it has no usable signature
+  const signature = getTransactionLastResult(outcome) as Hex | null;
+  if (!signature) {
+    throw new Error(`Transaction ${transactionHash} returned no signature`);
   }
-  return `0x${r}${s}${(27 + mpcSignature.recovery_id).toString(16)}`;
+  return { signature, transactionHash };
 }
 
 // The MPC reply arrives a few blocks later, so status reads can time out and are retried
