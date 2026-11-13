@@ -1,0 +1,24 @@
+{
+  "name": "stipend",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build:contract": "cd contract && cargo build --target wasm32-unknown-unknown --release",
+    "test:contract": "cd contract && cargo test",
+    "setup:testnet": "node demo/setup-testnet.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "near-api-js": "7.4.0",
+    "viem": "2.57.13"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
