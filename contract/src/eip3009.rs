@@ -1,4 +1,7 @@
-use near_sdk::env;
+use near_sdk::json_types::{U64, U128};
+use near_sdk::{env, near};
+
+use crate::hex;
 
 // EIP-712 type strings for the token domain and the transfer message
 const DOMAIN_TYPE: &str =
@@ -21,6 +24,36 @@ pub struct TransferWithAuthorization {
     pub valid_after: u64,
     pub valid_before: u64,
     pub nonce: [u8; 32],
+}
+
+// Transfer fields as JSON: addresses and nonce in 0x hex, numbers as strings
+#[near(serializers = [json])]
+pub struct TransferArgs {
+    pub from: String,
+    pub to: String,
+    pub value: U128,
+    pub valid_after: U64,
+    pub valid_before: U64,
+    pub nonce: String,
+}
+
+impl TransferArgs {
+    // Converts the JSON fields, panicking on malformed hex
+    pub fn parse(&self) -> TransferWithAuthorization {
+        TransferWithAuthorization {
+            from: parse_hex(&self.from, "from"),
+            to: parse_hex(&self.to, "to"),
+            value: self.value.0,
+            valid_after: self.valid_after.0,
+            valid_before: self.valid_before.0,
+            nonce: parse_hex(&self.nonce, "nonce"),
+        }
+    }
+}
+
+fn parse_hex<const LENGTH: usize>(value: &str, field: &str) -> [u8; LENGTH] {
+    hex::decode_fixed(value)
+        .unwrap_or_else(|| env::panic_str(&format!("{field} must be 0x hex of {LENGTH} bytes")))
 }
 
 // EIP-712 digest of a transfer, the hash the payer signs
@@ -77,14 +110,8 @@ fn address_word(address: &[u8; 20]) -> [u8; 32] {
 mod tests {
     use super::*;
 
-    fn bytes_from_hex<const LENGTH: usize>(hex: &str) -> [u8; LENGTH] {
-        let digits = hex.trim_start_matches("0x");
-        assert_eq!(digits.len(), LENGTH * 2, "wrong hex length: {hex}");
-        let mut bytes = [0u8; LENGTH];
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&digits[index * 2..index * 2 + 2], 16).unwrap();
-        }
-        bytes
+    fn bytes_from_hex<const LENGTH: usize>(value: &str) -> [u8; LENGTH] {
+        hex::decode_fixed(value).unwrap()
     }
 
     fn base_sepolia_usdc() -> TokenDomain {
