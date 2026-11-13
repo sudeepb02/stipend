@@ -2,6 +2,7 @@ pub mod asset;
 pub mod budget;
 pub mod eip3009;
 pub mod hex;
+pub mod mpc;
 pub mod payment;
 pub mod session;
 #[cfg(test)]
@@ -12,42 +13,16 @@ use budget::Budget;
 use eip3009::{TokenDomain, TransferArgs};
 use near_sdk::state::ContractState;
 use near_sdk::store::LookupMap;
-use near_sdk::{
-    AccountId, Gas, NearToken, PanicOnDefault, Promise, assert_one_yocto, env, near, require,
-    serde_json,
-};
+use near_sdk::{AccountId, PanicOnDefault, Promise, assert_one_yocto, env, near, require};
 use payment::{Payment, Share};
 use session::Session;
 
-// Secp256k1 key domain of the MPC signer
-const SECP256K1_DOMAIN_ID: u32 = 0;
-// The MPC contract requires at least 1 yoctoNEAR and 10 Tgas
-const MPC_SIGN_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
-const MPC_SIGN_GAS: Gas = Gas::from_tgas(30);
 // Longest validity of a signed payment, and longest agent session
 const MAX_WINDOW_SEC: u32 = 900;
 const MAX_SESSION_SEC: u32 = 21_600;
 // USDC on Base Sepolia
 const USDC_ADDRESS: &str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
-
-// Arguments of the MPC contract's sign method
-#[near(serializers = [json])]
-struct SignArgs {
-    request: SignRequest,
-}
-
-#[near(serializers = [json])]
-struct SignRequest {
-    payload_v2: SignPayload,
-    path: String,
-    domain_id: u32,
-}
-
-#[near(serializers = [json])]
-enum SignPayload {
-    Ecdsa(String),
-}
 
 // Accounts the contract trusts, and limits for payments and sessions
 #[near(serializers = [json, borsh])]
@@ -135,19 +110,7 @@ impl Stipend {
             "Only the contract account can request signatures"
         );
         let digest = eip3009::transfer_digest(&base_sepolia_usdc(), &transfer.parse());
-        let sign_args = SignArgs {
-            request: SignRequest {
-                payload_v2: SignPayload::Ecdsa(hex::encode(&digest)),
-                path,
-                domain_id: SECP256K1_DOMAIN_ID,
-            },
-        };
-        Promise::new(self.config.mpc_signer_id.clone()).function_call(
-            "sign".to_string(),
-            serde_json::to_vec(&sign_args).unwrap(),
-            MPC_SIGN_DEPOSIT,
-            MPC_SIGN_GAS,
-        )
+        mpc::request_signature(self.config.mpc_signer_id.clone(), path, &digest)
     }
 }
 
@@ -172,6 +135,25 @@ fn block_time_sec() -> u64 {
     env::block_timestamp() / 1_000_000_000
 }
 
+// Takes the storage cost from the attached deposit and refunds the rest to the caller
+fn charge_storage(bytes_used: u64) {
+    let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(bytes_used));
+    let deposit = env::attached_deposit();
+    require!(
+        deposit >= storage_cost,
+        format!(
+            "Attach at least {} yoctoNEAR for storage",
+            storage_cost.as_yoctonear()
+        )
+    );
+    let refund = deposit.saturating_sub(storage_cost);
+    if !refund.is_zero() {
+        Promise::new(env::predecessor_account_id())
+            .transfer(refund)
+            .detach();
+    }
+}
+
 fn base_sepolia_usdc() -> TokenDomain {
     TokenDomain {
         name: "USDC".to_string(),
@@ -190,7 +172,7 @@ mod tests {
     };
     use near_sdk::json_types::{U64, U128};
     use near_sdk::mock::MockAction;
-    use near_sdk::serde_json::Value;
+    use near_sdk::serde_json::{self, Value};
     use near_sdk::test_utils::get_created_receipts;
 
     fn sample_transfer() -> TransferArgs {
@@ -281,8 +263,8 @@ mod tests {
             panic!("expected a function call");
         };
         assert_eq!(method_name.as_slice(), b"sign");
-        assert_eq!(*attached_deposit, MPC_SIGN_DEPOSIT);
-        assert_eq!(*prepaid_gas, MPC_SIGN_GAS);
+        assert_eq!(*attached_deposit, mpc::SIGN_DEPOSIT);
+        assert_eq!(*prepaid_gas, mpc::SIGN_GAS);
 
         let sent: Value = serde_json::from_slice(args).unwrap();
         // Digest of the same fields from viem hashTypedData

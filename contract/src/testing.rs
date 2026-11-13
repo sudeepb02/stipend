@@ -1,7 +1,9 @@
 // Shared setup for unit tests
 use near_sdk::json_types::{U64, U128};
+use near_sdk::mock::{MockAction, Receipt};
+use near_sdk::serde_json::{self, Value};
 use near_sdk::test_utils::VMContextBuilder;
-use near_sdk::{NearToken, testing_env};
+use near_sdk::{Gas, NearToken, testing_env};
 
 use crate::Stipend;
 use crate::asset::Asset;
@@ -102,5 +104,26 @@ pub fn create_budget(contract: &mut Stipend, budget: Budget) -> U64 {
         budget.limits,
         budget.payees,
         budget.expires_at,
+    )
+}
+
+// Method name, JSON arguments, deposit and gas of a receipt's function call
+pub fn function_call(receipt: &Receipt) -> (String, Value, NearToken, Gas) {
+    let MockAction::FunctionCallWeight {
+        method_name,
+        args,
+        attached_deposit,
+        prepaid_gas,
+        ..
+    } = &receipt.actions[0]
+    else {
+        panic!("expected a function call");
+    };
+    let method = String::from_utf8(method_name.clone()).unwrap();
+    (
+        method,
+        serde_json::from_slice(args).unwrap(),
+        *attached_deposit,
+        *prepaid_gas,
     )
 }

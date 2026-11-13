@@ -1,9 +1,14 @@
 use near_sdk::json_types::{U64, U128};
-use near_sdk::{AccountId, Promise, assert_one_yocto, env, near, require};
+use near_sdk::{AccountId, assert_one_yocto, env, near, require};
 
-use crate::{Stipend, StipendExt, block_time_sec, hex};
+use crate::{Stipend, StipendExt, block_time_sec, charge_storage, hex};
 
 const MAX_PAYEES: usize = 10;
+
+// Derivation path of the key that controls a budget's pot
+pub fn budget_path(budget_id: u64) -> String {
+    format!("budget/{budget_id}")
+}
 
 // Funds for one IMD job, paid from the pot at path budget/<id>
 #[near(serializers = [json, borsh])]
@@ -136,25 +141,6 @@ impl Stipend {
             .get(&job_id)
             .map(|budget_ids| budget_ids.iter().map(|&budget_id| U64(budget_id)).collect())
             .unwrap_or_default()
-    }
-}
-
-// Takes the storage cost from the attached deposit and refunds the rest to the caller
-fn charge_storage(bytes_used: u64) {
-    let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(bytes_used));
-    let deposit = env::attached_deposit();
-    require!(
-        deposit >= storage_cost,
-        format!(
-            "Attach at least {} yoctoNEAR for storage",
-            storage_cost.as_yoctonear()
-        )
-    );
-    let refund = deposit.saturating_sub(storage_cost);
-    if !refund.is_zero() {
-        Promise::new(env::predecessor_account_id())
-            .transfer(refund)
-            .detach();
     }
 }
 

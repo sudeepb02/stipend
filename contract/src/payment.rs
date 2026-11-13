@@ -1,11 +1,14 @@
 use near_sdk::json_types::{U64, U128};
-use near_sdk::{env, near, require};
+use near_sdk::{Gas, Promise, PromiseError, env, near, require};
 
-use crate::eip3009::TransferArgs;
-use crate::{Stipend, StipendExt, block_time_sec, hex};
+use crate::budget::budget_path;
+use crate::eip3009::{self, TransferArgs};
+use crate::mpc::{self, MpcSignature};
+use crate::{Stipend, StipendExt, block_time_sec, charge_storage, hex};
 
 const MAX_RESOURCE_BYTES: usize = 512;
 const MAX_PAGE_SIZE: u32 = 100;
+const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 
 // A seat's part of a budget, reserved at the per-agent cap on the seat's first payment
 #[near(serializers = [json, borsh])]
@@ -30,6 +33,31 @@ pub struct Payment {
     pub resource: String,
     // Unix time in seconds when the payment was recorded
     pub created_at: U64,
+    pub status: PaymentStatus,
+}
+
+#[near(serializers = [json, borsh])]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PaymentStatus {
+    // Waiting for the MPC signature
+    Pending,
+    Signed,
+    // Signing failed and the value went back to the seat's share
+    Failed,
+}
+
+// NEP-297 events of the contract
+#[near(event_json(standard = "stipend"))]
+pub enum StipendEvent {
+    // Result of signing a payment
+    #[event_version("1.0.0")]
+    Payment {
+        budget_id: U64,
+        payment_index: u32,
+        seat_id: String,
+        value: U128,
+        status: PaymentStatus,
+    },
 }
 
 impl Stipend {
@@ -119,14 +147,91 @@ impl Stipend {
             valid_before: transfer.valid_before,
             resource,
             created_at: U64(block_time),
+            status: PaymentStatus::Pending,
         };
         self.payments.insert((budget_id, payment_index), payment);
         payment_index
+    }
+
+    // EIP-712 hash of a transfer in the token of a budget
+    fn budget_transfer_digest(&self, budget_id: u64, transfer: &TransferArgs) -> [u8; 32] {
+        let budget = &self.budgets[&budget_id];
+        let asset = &self.assets[&budget.asset_id];
+        eip3009::transfer_digest(&asset.domain(), &transfer.parse())
     }
 }
 
 #[near]
 impl Stipend {
+    // Pays from a budget's pot for the calling session: after the payment rules pass, the MPC
+    // network signs the transfer and the callback returns the EVM signature. The caller attaches
+    // NEAR for the storage the payment uses and gets the rest back.
+    #[payable]
+    pub fn pay(&mut self, budget_id: U64, transfer: TransferArgs, resource: String) -> Promise {
+        let storage_before = env::storage_usage();
+        let payment_index = self.record_payment(budget_id.0, &transfer, resource);
+        // Writes the changes now, so their storage can be measured
+        self.budgets.flush();
+        self.shares.flush();
+        self.payments.flush();
+        charge_storage(env::storage_usage() - storage_before);
+
+        let digest = self.budget_transfer_digest(budget_id.0, &transfer);
+        mpc::request_signature(
+            self.config.mpc_signer_id.clone(),
+            budget_path(budget_id.0),
+            &digest,
+        )
+        .then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(CALLBACK_GAS)
+                .on_payment_signed(budget_id, payment_index),
+        )
+    }
+
+    // Records the MPC result of a payment and returns its EVM signature. When signing failed it
+    // credits the value back to the seat's share. The body never panics, so a credit-back is
+    // never rolled back.
+    #[private]
+    pub fn on_payment_signed(
+        &mut self,
+        budget_id: U64,
+        payment_index: u32,
+        #[callback_result] result: Result<MpcSignature, PromiseError>,
+    ) -> Option<String> {
+        let payment = self.payments.get_mut(&(budget_id.0, payment_index))?;
+        let evm_signature = match result {
+            Ok(mpc_signature) => {
+                payment.status = PaymentStatus::Signed;
+                mpc_signature.to_evm_signature()
+            }
+            Err(PromiseError::Failed) => {
+                payment.status = PaymentStatus::Failed;
+                if let Some(share) = self.shares.get_mut(&(budget_id.0, payment.seat_id.clone())) {
+                    share.spent = U128(share.spent.0.saturating_sub(payment.value.0));
+                }
+                if let Some(budget) = self.budgets.get_mut(&budget_id.0) {
+                    budget.spent_total = U128(budget.spent_total.0.saturating_sub(payment.value.0));
+                }
+                None
+            }
+            // The MPC call succeeded with a reply too long to read, so a signature may exist
+            Err(_) => {
+                payment.status = PaymentStatus::Signed;
+                None
+            }
+        };
+        StipendEvent::Payment {
+            budget_id,
+            payment_index,
+            seat_id: payment.seat_id.clone(),
+            value: payment.value,
+            status: payment.status,
+        }
+        .emit();
+        evm_signature
+    }
+
     pub fn get_share(&self, budget_id: U64, seat_id: String) -> Option<Share> {
         self.shares.get(&(budget_id.0, seat_id)).cloned()
     }
@@ -149,11 +254,15 @@ impl Stipend {
 mod tests {
     use super::*;
     use crate::budget::Budget;
+    use crate::mpc::{AffinePoint, Scalar};
     use crate::testing::{
-        AGENT_ID, BLOCK_TIME_SEC, FUNDER_ID, JOB_ID, NO_DEPOSIT, ONE_YOCTO, ORACLE_ID, PAYEE,
-        SEAT_ID, STORAGE_DEPOSIT, call_as, call_at, contract_with_usdc, create_budget,
-        sample_budget,
+        AGENT_ID, BLOCK_TIME_SEC, CONTRACT_ID, FUNDER_ID, JOB_ID, MPC_SIGNER_ID, NO_DEPOSIT,
+        ONE_YOCTO, ORACLE_ID, PAYEE, SEAT_ID, STORAGE_DEPOSIT, call_as, call_at,
+        contract_with_usdc, create_budget, function_call, sample_budget, usdc_asset,
     };
+    use near_sdk::mock::{MockAction, Receipt};
+    use near_sdk::serde_json;
+    use near_sdk::test_utils::{get_created_receipts, get_logs};
 
     const POT: &str = "0x90a9d41B34E0D076EB65D7A0D547f34d4beFECdF";
     const NONCE: &str = "0x0102030405060708091011121314151617181920212223242526272829303132";
@@ -225,6 +334,7 @@ mod tests {
             valid_before: U64(BLOCK_TIME_SEC + 300),
             resource: RESOURCE.to_string(),
             created_at: U64(BLOCK_TIME_SEC),
+            status: PaymentStatus::Pending,
         };
         assert_eq!(contract.get_payments(U64(0), 0, 10), vec![expected_payment]);
     }
@@ -416,5 +526,159 @@ mod tests {
     fn get_share_returns_none_before_the_first_payment() {
         let contract = contract_with_agent(sample_budget());
         assert_eq!(seat_share(&contract, SEAT_ID), None);
+    }
+
+    // Pays from budget 0 as the agent, attaching the storage deposit
+    fn pay_as_agent(contract: &mut Stipend) {
+        call_as(AGENT_ID, STORAGE_DEPOSIT);
+        let _ = contract.pay(U64(0), transfer(PAYMENT_VALUE), RESOURCE.to_string());
+    }
+
+    // Contract after the agent's payment, called next by itself with the MPC result
+    fn contract_waiting_for_signature() -> Stipend {
+        let mut contract = contract_with_agent(sample_budget());
+        pay_as_agent(&mut contract);
+        call_as(CONTRACT_ID, NO_DEPOSIT);
+        contract
+    }
+
+    fn receipt_to<'a>(receipts: &'a [Receipt], receiver: &str) -> &'a Receipt {
+        receipts
+            .iter()
+            .find(|receipt| receipt.receiver_id.as_str() == receiver)
+            .unwrap()
+    }
+
+    fn payment_status(contract: &Stipend) -> PaymentStatus {
+        contract.get_payments(U64(0), 0, 1)[0].status
+    }
+
+    fn sample_reply() -> MpcSignature {
+        MpcSignature {
+            big_r: AffinePoint {
+                affine_point: format!("03{}", "11".repeat(32)),
+            },
+            s: Scalar {
+                scalar: "22".repeat(32),
+            },
+            recovery_id: 0,
+        }
+    }
+
+    #[test]
+    fn pay_asks_the_mpc_signer_to_sign_for_the_budget_pot() {
+        let mut contract = contract_with_agent(sample_budget());
+        pay_as_agent(&mut contract);
+        let receipts = get_created_receipts();
+
+        let (method, args, deposit, gas) = function_call(receipt_to(&receipts, MPC_SIGNER_ID));
+        let digest =
+            eip3009::transfer_digest(&usdc_asset().domain(), &transfer(PAYMENT_VALUE).parse());
+        assert_eq!(method, "sign");
+        assert_eq!(args["request"]["payload_v2"]["Ecdsa"], hex::encode(&digest));
+        assert_eq!(args["request"]["path"], "budget/0");
+        assert_eq!(args["request"]["domain_id"], 0);
+        assert_eq!((deposit, gas), (mpc::SIGN_DEPOSIT, mpc::SIGN_GAS));
+
+        let (method, args, _, gas) = function_call(receipt_to(&receipts, CONTRACT_ID));
+        assert_eq!(method, "on_payment_signed");
+        assert_eq!(
+            args,
+            serde_json::json!({ "budget_id": "0", "payment_index": 0 })
+        );
+        assert_eq!(gas, CALLBACK_GAS);
+        assert_eq!(payment_status(&contract), PaymentStatus::Pending);
+    }
+
+    #[test]
+    fn pay_charges_the_payment_storage_and_refunds_the_rest() {
+        let mut contract = contract_with_agent(sample_budget());
+        call_as(AGENT_ID, STORAGE_DEPOSIT);
+        let storage_before = env::storage_usage();
+        let _ = contract.pay(U64(0), transfer(PAYMENT_VALUE), RESOURCE.to_string());
+        let bytes_used = env::storage_usage() - storage_before;
+        let storage_cost = env::storage_byte_cost().saturating_mul(u128::from(bytes_used));
+
+        let receipts = get_created_receipts();
+        let MockAction::Transfer { deposit, .. } = receipt_to(&receipts, AGENT_ID).actions[0]
+        else {
+            panic!("expected a transfer");
+        };
+        assert!(bytes_used > 0);
+        assert_eq!(deposit, STORAGE_DEPOSIT.saturating_sub(storage_cost));
+    }
+
+    #[test]
+    #[should_panic(expected = "yoctoNEAR for storage")]
+    fn pay_requires_a_storage_deposit() {
+        let mut contract = contract_with_agent(sample_budget());
+        call_as(AGENT_ID, ONE_YOCTO);
+        let _ = contract.pay(U64(0), transfer(PAYMENT_VALUE), RESOURCE.to_string());
+    }
+
+    #[test]
+    #[should_panic(expected = "Caller has no session")]
+    fn pay_applies_the_payment_rules() {
+        let mut contract = contract_with_agent(sample_budget());
+        call_as("stranger.testnet", STORAGE_DEPOSIT);
+        let _ = contract.pay(U64(0), transfer(PAYMENT_VALUE), RESOURCE.to_string());
+    }
+
+    #[test]
+    fn on_payment_signed_returns_the_evm_signature() {
+        let mut contract = contract_waiting_for_signature();
+        let evm_signature = contract.on_payment_signed(U64(0), 0, Ok(sample_reply()));
+        assert_eq!(
+            evm_signature,
+            Some(format!("0x{}{}1b", "11".repeat(32), "22".repeat(32)))
+        );
+        assert_eq!(payment_status(&contract), PaymentStatus::Signed);
+        assert_eq!(
+            seat_share(&contract, SEAT_ID).unwrap().spent,
+            U128(PAYMENT_VALUE)
+        );
+        assert_eq!(
+            get_logs(),
+            vec![
+                r#"EVENT_JSON:{"standard":"stipend","version":"1.0.0","event":"payment","data":{"budget_id":"0","payment_index":0,"seat_id":"7","value":"10000","status":"Signed"}}"#
+            ]
+        );
+    }
+
+    #[test]
+    fn on_payment_signed_credits_the_value_back_when_signing_fails() {
+        let mut contract = contract_waiting_for_signature();
+        let evm_signature = contract.on_payment_signed(U64(0), 0, Err(PromiseError::Failed));
+        assert_eq!(evm_signature, None);
+        assert_eq!(payment_status(&contract), PaymentStatus::Failed);
+        let share = seat_share(&contract, SEAT_ID).unwrap();
+        assert_eq!((share.reserved, share.spent), (U128(250_000), U128(0)));
+        assert_eq!(contract.get_budget(U64(0)).unwrap().spent_total, U128(0));
+        assert!(get_logs()[0].contains(r#""status":"Failed""#));
+    }
+
+    #[test]
+    fn on_payment_signed_keeps_the_value_spent_for_an_unreadable_reply() {
+        let mut contract = contract_waiting_for_signature();
+        let evm_signature = contract.on_payment_signed(U64(0), 0, Err(PromiseError::TooLong(0)));
+        assert_eq!(evm_signature, None);
+        assert_eq!(payment_status(&contract), PaymentStatus::Signed);
+        assert_eq!(
+            seat_share(&contract, SEAT_ID).unwrap().spent,
+            U128(PAYMENT_VALUE)
+        );
+    }
+
+    #[test]
+    fn on_payment_signed_keeps_the_value_spent_for_an_unusable_signature() {
+        let mut contract = contract_waiting_for_signature();
+        let mut reply = sample_reply();
+        reply.recovery_id = 2;
+        assert_eq!(contract.on_payment_signed(U64(0), 0, Ok(reply)), None);
+        assert_eq!(payment_status(&contract), PaymentStatus::Signed);
+        assert_eq!(
+            seat_share(&contract, SEAT_ID).unwrap().spent,
+            U128(PAYMENT_VALUE)
+        );
     }
 }
