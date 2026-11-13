@@ -1,3 +1,5 @@
+use near_sdk::env;
+
 // Decodes 0x-prefixed hex into exactly LENGTH bytes
 pub fn decode_fixed<const LENGTH: usize>(hex: &str) -> Option<[u8; LENGTH]> {
     let digits = hex.strip_prefix("0x")?;
@@ -9,6 +11,12 @@ pub fn decode_fixed<const LENGTH: usize>(hex: &str) -> Option<[u8; LENGTH]> {
         *byte = u8::from_str_radix(&digits[index * 2..index * 2 + 2], 16).ok()?;
     }
     Some(bytes)
+}
+
+// Decodes the 0x hex of a named field, panicking when it is malformed
+pub fn decode_field<const LENGTH: usize>(value: &str, field: &str) -> [u8; LENGTH] {
+    decode_fixed(value)
+        .unwrap_or_else(|| env::panic_str(&format!("{field} must be 0x hex of {LENGTH} bytes")))
 }
 
 // Encodes bytes as lowercase hex without a prefix

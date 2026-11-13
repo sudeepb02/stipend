@@ -41,19 +41,14 @@ impl TransferArgs {
     // Converts the JSON fields, panicking on malformed hex
     pub fn parse(&self) -> TransferWithAuthorization {
         TransferWithAuthorization {
-            from: parse_hex(&self.from, "from"),
-            to: parse_hex(&self.to, "to"),
+            from: hex::decode_field(&self.from, "from"),
+            to: hex::decode_field(&self.to, "to"),
             value: self.value.0,
             valid_after: self.valid_after.0,
             valid_before: self.valid_before.0,
-            nonce: parse_hex(&self.nonce, "nonce"),
+            nonce: hex::decode_field(&self.nonce, "nonce"),
         }
     }
-}
-
-fn parse_hex<const LENGTH: usize>(value: &str, field: &str) -> [u8; LENGTH] {
-    hex::decode_fixed(value)
-        .unwrap_or_else(|| env::panic_str(&format!("{field} must be 0x hex of {LENGTH} bytes")))
 }
 
 // EIP-712 digest of a transfer, the hash the payer signs

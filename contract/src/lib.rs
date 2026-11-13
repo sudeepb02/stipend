@@ -1,15 +1,26 @@
+pub mod asset;
 pub mod eip3009;
 pub mod hex;
+#[cfg(test)]
+mod testing;
 
+use asset::Asset;
 use eip3009::{TokenDomain, TransferArgs};
-use near_sdk::{AccountId, Gas, NearToken, Promise, env, near, require, serde_json};
+use near_sdk::state::ContractState;
+use near_sdk::store::LookupMap;
+use near_sdk::{
+    AccountId, Gas, NearToken, PanicOnDefault, Promise, assert_one_yocto, env, near, require,
+    serde_json,
+};
 
-// MPC signer on NEAR testnet and its secp256k1 key domain
-const MPC_SIGNER_ID: &str = "v1.signer-prod.testnet";
+// Secp256k1 key domain of the MPC signer
 const SECP256K1_DOMAIN_ID: u32 = 0;
 // The MPC contract requires at least 1 yoctoNEAR and 10 Tgas
 const MPC_SIGN_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
 const MPC_SIGN_GAS: Gas = Gas::from_tgas(30);
+// Longest validity of a signed payment, and longest agent session
+const MAX_WINDOW_SEC: u32 = 900;
+const MAX_SESSION_SEC: u32 = 21_600;
 // USDC on Base Sepolia
 const USDC_ADDRESS: &str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
@@ -32,16 +43,68 @@ enum SignPayload {
     Ecdsa(String),
 }
 
+// Accounts the contract trusts, and limits for payments and sessions
+#[near(serializers = [json, borsh])]
+#[derive(Clone)]
+pub struct Config {
+    // Registers assets and sets the oracle
+    pub owner: AccountId,
+    // Control plane account that assigns agents to jobs
+    pub oracle: AccountId,
+    // MPC signer contract, such as v1.signer-prod.testnet
+    pub mpc_signer_id: AccountId,
+    pub max_window_sec: u32,
+    pub max_session_sec: u32,
+}
+
 // Stipend contract state
 #[near(contract_state)]
-#[derive(Default)]
-pub struct Stipend {}
+#[derive(PanicOnDefault)]
+pub struct Stipend {
+    config: Config,
+    assets: LookupMap<String, Asset>,
+}
 
 #[near]
 impl Stipend {
+    // Runs once, called by the contract account on a new account or over an empty state
+    #[init(ignore_state)]
+    pub fn new(owner: AccountId, oracle: AccountId, mpc_signer_id: AccountId) -> Self {
+        require!(
+            env::predecessor_account_id() == env::current_account_id(),
+            "Only the contract account can initialize"
+        );
+        require!(
+            env::storage_read(Self::state_key()).is_none_or(|state| state.is_empty()),
+            "Already initialized"
+        );
+        Self {
+            config: Config {
+                owner,
+                oracle,
+                mpc_signer_id,
+                max_window_sec: MAX_WINDOW_SEC,
+                max_session_sec: MAX_SESSION_SEC,
+            },
+            assets: LookupMap::new(b"a"),
+        }
+    }
+
     // Returns the contract name, used as a liveness check
     pub fn ping(&self) -> String {
         "stipend".to_string()
+    }
+
+    // Replaces the control plane account
+    #[payable]
+    pub fn set_oracle(&mut self, oracle: AccountId) {
+        assert_one_yocto();
+        self.require_owner();
+        self.config.oracle = oracle;
+    }
+
+    pub fn get_config(&self) -> Config {
+        self.config.clone()
     }
 
     // Asks the MPC network to sign a USDC transfer from the address of a wallet path
@@ -58,13 +121,21 @@ impl Stipend {
                 domain_id: SECP256K1_DOMAIN_ID,
             },
         };
-        let mpc_signer: AccountId = MPC_SIGNER_ID.parse().unwrap();
-        Promise::new(mpc_signer).function_call(
+        Promise::new(self.config.mpc_signer_id.clone()).function_call(
             "sign".to_string(),
             serde_json::to_vec(&sign_args).unwrap(),
             MPC_SIGN_DEPOSIT,
             MPC_SIGN_GAS,
         )
+    }
+}
+
+impl Stipend {
+    fn require_owner(&self) {
+        require!(
+            env::predecessor_account_id() == self.config.owner,
+            "Only the owner can call this method"
+        );
     }
 }
 
@@ -80,22 +151,14 @@ fn base_sepolia_usdc() -> TokenDomain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{
+        CONTRACT_ID, MPC_SIGNER_ID, NO_DEPOSIT, ONE_YOCTO, ORACLE_ID, call_as, init_contract,
+        new_contract,
+    };
     use near_sdk::json_types::{U64, U128};
     use near_sdk::mock::MockAction;
     use near_sdk::serde_json::Value;
-    use near_sdk::test_utils::{VMContextBuilder, get_created_receipts};
-    use near_sdk::testing_env;
-
-    const CONTRACT_ID: &str = "stipend.testnet";
-
-    fn called_by(caller: &str) {
-        testing_env!(
-            VMContextBuilder::new()
-                .current_account_id(CONTRACT_ID.parse().unwrap())
-                .predecessor_account_id(caller.parse().unwrap())
-                .build()
-        );
-    }
+    use near_sdk::test_utils::get_created_receipts;
 
     fn sample_transfer() -> TransferArgs {
         TransferArgs {
@@ -109,15 +172,67 @@ mod tests {
     }
 
     #[test]
+    fn new_sets_accounts_and_limits() {
+        let config = new_contract().get_config();
+        assert_eq!(config.owner.as_str(), CONTRACT_ID);
+        assert_eq!(config.oracle.as_str(), ORACLE_ID);
+        assert_eq!(config.mpc_signer_id.as_str(), MPC_SIGNER_ID);
+        assert_eq!(config.max_window_sec, 900);
+        assert_eq!(config.max_session_sec, 21_600);
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the contract account can initialize")]
+    fn new_rejects_other_callers() {
+        call_as("someone.testnet", NO_DEPOSIT);
+        init_contract();
+    }
+
+    #[test]
+    fn new_accepts_an_empty_state() {
+        call_as(CONTRACT_ID, NO_DEPOSIT);
+        env::storage_write(Stipend::state_key(), &[]);
+        assert_eq!(init_contract().get_config().owner.as_str(), CONTRACT_ID);
+    }
+
+    #[test]
+    #[should_panic(expected = "Already initialized")]
+    fn new_rejects_an_initialized_state() {
+        new_contract().state_write();
+        init_contract();
+    }
+
+    #[test]
+    fn set_oracle_replaces_the_oracle() {
+        let mut contract = new_contract();
+        call_as(CONTRACT_ID, ONE_YOCTO);
+        contract.set_oracle("new-oracle.testnet".parse().unwrap());
+        assert_eq!(contract.get_config().oracle.as_str(), "new-oracle.testnet");
+    }
+
+    #[test]
+    #[should_panic(expected = "Only the owner can call this method")]
+    fn set_oracle_rejects_other_callers() {
+        let mut contract = new_contract();
+        call_as(ORACLE_ID, ONE_YOCTO);
+        contract.set_oracle(ORACLE_ID.parse().unwrap());
+    }
+
+    #[test]
+    #[should_panic(expected = "Requires attached deposit of exactly 1 yoctoNEAR")]
+    fn set_oracle_requires_one_yocto() {
+        let mut contract = new_contract();
+        contract.set_oracle("new-oracle.testnet".parse().unwrap());
+    }
+
+    #[test]
     fn ping_returns_contract_name() {
-        let contract = Stipend::default();
-        assert_eq!(contract.ping(), "stipend");
+        assert_eq!(new_contract().ping(), "stipend");
     }
 
     #[test]
     fn sign_transfer_calls_mpc_with_the_transfer_digest() {
-        called_by(CONTRACT_ID);
-        let _ = Stipend::default().sign_transfer("budget/0".to_string(), sample_transfer());
+        let _ = new_contract().sign_transfer("budget/0".to_string(), sample_transfer());
 
         let receipts = get_created_receipts();
         assert_eq!(receipts.len(), 1);
@@ -149,16 +264,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "Only the contract account can request signatures")]
     fn sign_transfer_rejects_other_callers() {
-        called_by("someone.testnet");
-        let _ = Stipend::default().sign_transfer("budget/0".to_string(), sample_transfer());
+        let mut contract = new_contract();
+        call_as("someone.testnet", NO_DEPOSIT);
+        let _ = contract.sign_transfer("budget/0".to_string(), sample_transfer());
     }
 
     #[test]
     #[should_panic(expected = "from must be 0x hex of 20 bytes")]
     fn sign_transfer_rejects_malformed_addresses() {
-        called_by(CONTRACT_ID);
         let mut transfer = sample_transfer();
         transfer.from = "0x1234".to_string();
-        let _ = Stipend::default().sign_transfer("budget/0".to_string(), transfer);
+        let _ = new_contract().sign_transfer("budget/0".to_string(), transfer);
     }
 }
