@@ -11,6 +11,8 @@ pub const ORACLE_ID: &str = "oracle.testnet";
 pub const MPC_SIGNER_ID: &str = "v1.signer-prod.testnet";
 pub const NO_DEPOSIT: NearToken = NearToken::from_yoctonear(0);
 pub const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
+// Block time of every test call, in Unix seconds
+pub const BLOCK_TIME_SEC: u64 = 1_794_500_000;
 
 // Sets the caller and the attached deposit for the next contract call
 pub fn call_as(caller: &str, deposit: NearToken) {
@@ -19,6 +21,7 @@ pub fn call_as(caller: &str, deposit: NearToken) {
             .current_account_id(CONTRACT_ID.parse().unwrap())
             .predecessor_account_id(caller.parse().unwrap())
             .attached_deposit(deposit)
+            .block_timestamp(BLOCK_TIME_SEC * 1_000_000_000)
             .build()
     );
 }

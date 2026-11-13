@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod eip3009;
 pub mod hex;
+pub mod session;
 #[cfg(test)]
 mod testing;
 
@@ -12,6 +13,7 @@ use near_sdk::{
     AccountId, Gas, NearToken, PanicOnDefault, Promise, assert_one_yocto, env, near, require,
     serde_json,
 };
+use session::Session;
 
 // Secp256k1 key domain of the MPC signer
 const SECP256K1_DOMAIN_ID: u32 = 0;
@@ -63,6 +65,7 @@ pub struct Config {
 pub struct Stipend {
     config: Config,
     assets: LookupMap<String, Asset>,
+    sessions: LookupMap<AccountId, Session>,
 }
 
 #[near]
@@ -87,6 +90,7 @@ impl Stipend {
                 max_session_sec: MAX_SESSION_SEC,
             },
             assets: LookupMap::new(b"a"),
+            sessions: LookupMap::new(b"s"),
         }
     }
 
@@ -137,6 +141,18 @@ impl Stipend {
             "Only the owner can call this method"
         );
     }
+
+    fn require_oracle(&self) {
+        require!(
+            env::predecessor_account_id() == self.config.oracle,
+            "Only the oracle can call this method"
+        );
+    }
+}
+
+// Current block time in Unix seconds, the unit EIP-3009 uses
+fn block_time_sec() -> u64 {
+    env::block_timestamp() / 1_000_000_000
 }
 
 fn base_sepolia_usdc() -> TokenDomain {
