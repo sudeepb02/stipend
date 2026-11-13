@@ -1,3 +1,5 @@
+pub mod eip3009;
+
 use near_sdk::near;
 
 // Stipend contract state
