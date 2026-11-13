@@ -7,6 +7,8 @@ const SECP256K1_DOMAIN_ID: u32 = 0;
 // The MPC contract requires at least 1 yoctoNEAR and 10 Tgas
 pub const SIGN_DEPOSIT: NearToken = NearToken::from_yoctonear(1);
 pub const SIGN_GAS: Gas = Gas::from_tgas(30);
+// Gas for the contract's callback that reads the sign reply
+pub const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 
 // Arguments of the MPC contract's sign method
 #[near(serializers = [json])]

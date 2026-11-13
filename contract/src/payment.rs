@@ -1,14 +1,14 @@
 use near_sdk::json_types::{U64, U128};
-use near_sdk::{Gas, Promise, PromiseError, env, near, require};
+use near_sdk::{Promise, PromiseError, env, near, require};
 
 use crate::budget::budget_path;
 use crate::eip3009::{self, TransferArgs};
 use crate::mpc::{self, MpcSignature};
+use crate::refund::refund_nonce;
 use crate::{Stipend, StipendExt, block_time_sec, charge_storage, hex};
 
 const MAX_RESOURCE_BYTES: usize = 512;
 const MAX_PAGE_SIZE: u32 = 100;
-const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 
 // A seat's part of a budget, reserved at the per-agent cap on the seat's first payment
 #[near(serializers = [json, borsh])]
@@ -57,6 +57,13 @@ pub enum StipendEvent {
         seat_id: String,
         value: U128,
         status: PaymentStatus,
+    },
+    // Signed refund of a budget's leftover
+    #[event_version("1.0.0")]
+    Refund {
+        budget_id: U64,
+        to: String,
+        value: U128,
     },
 }
 
@@ -130,6 +137,10 @@ impl Stipend {
             "Authorization window is longer than the limit"
         );
         require!(
+            fields.nonce != refund_nonce(budget_id),
+            "Nonce is reserved for the budget's refund"
+        );
+        require!(
             resource.len() <= MAX_RESOURCE_BYTES,
             "Resource is longer than 512 bytes"
         );
@@ -154,7 +165,7 @@ impl Stipend {
     }
 
     // EIP-712 hash of a transfer in the token of a budget
-    fn budget_transfer_digest(&self, budget_id: u64, transfer: &TransferArgs) -> [u8; 32] {
+    pub fn budget_transfer_digest(&self, budget_id: u64, transfer: &TransferArgs) -> [u8; 32] {
         let budget = &self.budgets[&budget_id];
         let asset = &self.assets[&budget.asset_id];
         eip3009::transfer_digest(&asset.domain(), &transfer.parse())
@@ -184,7 +195,7 @@ impl Stipend {
         )
         .then(
             Self::ext(env::current_account_id())
-                .with_static_gas(CALLBACK_GAS)
+                .with_static_gas(mpc::CALLBACK_GAS)
                 .on_payment_signed(budget_id, payment_index),
         )
     }
@@ -254,13 +265,13 @@ impl Stipend {
 mod tests {
     use super::*;
     use crate::budget::Budget;
-    use crate::mpc::{AffinePoint, Scalar};
     use crate::testing::{
         AGENT_ID, BLOCK_TIME_SEC, CONTRACT_ID, FUNDER_ID, JOB_ID, MPC_SIGNER_ID, NO_DEPOSIT,
         ONE_YOCTO, ORACLE_ID, PAYEE, SEAT_ID, STORAGE_DEPOSIT, call_as, call_at,
-        contract_with_usdc, create_budget, function_call, sample_budget, usdc_asset,
+        contract_with_usdc, create_budget, function_call, receipt_to, sample_budget, sample_reply,
+        usdc_asset,
     };
-    use near_sdk::mock::{MockAction, Receipt};
+    use near_sdk::mock::MockAction;
     use near_sdk::serde_json;
     use near_sdk::test_utils::{get_created_receipts, get_logs};
 
@@ -495,6 +506,15 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Nonce is reserved for the budget's refund")]
+    fn record_payment_rejects_the_refund_nonce() {
+        let mut contract = contract_with_agent(sample_budget());
+        let mut refund_nonce_payment = transfer(PAYMENT_VALUE);
+        refund_nonce_payment.nonce = format!("0x{}", hex::encode(&refund_nonce(0)));
+        pay(&mut contract, refund_nonce_payment);
+    }
+
+    #[test]
     #[should_panic(expected = "Resource is longer than 512 bytes")]
     fn record_payment_rejects_a_long_resource() {
         let mut contract = contract_with_agent(sample_budget());
@@ -542,27 +562,8 @@ mod tests {
         contract
     }
 
-    fn receipt_to<'a>(receipts: &'a [Receipt], receiver: &str) -> &'a Receipt {
-        receipts
-            .iter()
-            .find(|receipt| receipt.receiver_id.as_str() == receiver)
-            .unwrap()
-    }
-
     fn payment_status(contract: &Stipend) -> PaymentStatus {
         contract.get_payments(U64(0), 0, 1)[0].status
-    }
-
-    fn sample_reply() -> MpcSignature {
-        MpcSignature {
-            big_r: AffinePoint {
-                affine_point: format!("03{}", "11".repeat(32)),
-            },
-            s: Scalar {
-                scalar: "22".repeat(32),
-            },
-            recovery_id: 0,
-        }
     }
 
     #[test]
@@ -586,7 +587,7 @@ mod tests {
             args,
             serde_json::json!({ "budget_id": "0", "payment_index": 0 })
         );
-        assert_eq!(gas, CALLBACK_GAS);
+        assert_eq!(gas, mpc::CALLBACK_GAS);
         assert_eq!(payment_status(&contract), PaymentStatus::Pending);
     }
 

@@ -47,6 +47,12 @@ impl Budget {
     pub fn is_open(&self, block_time: u64) -> bool {
         self.closed_at.is_none() && block_time < self.expires_at.0
     }
+
+    // Unix time in seconds when the budget stops paying: its close time, or else its expiry
+    pub fn ended_at(&self) -> u64 {
+        self.closed_at
+            .map_or(self.expires_at.0, |closed_at| closed_at.0)
+    }
 }
 
 #[near]
@@ -344,5 +350,13 @@ mod tests {
         let budget = sample_budget();
         assert!(budget.is_open(budget.expires_at.0 - 1));
         assert!(!budget.is_open(budget.expires_at.0));
+    }
+
+    #[test]
+    fn budget_ends_at_its_close_or_else_its_expiry() {
+        let mut budget = sample_budget();
+        assert_eq!(budget.ended_at(), budget.expires_at.0);
+        budget.closed_at = Some(U64(BLOCK_TIME_SEC));
+        assert_eq!(budget.ended_at(), BLOCK_TIME_SEC);
     }
 }

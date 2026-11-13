@@ -4,6 +4,7 @@ pub mod eip3009;
 pub mod hex;
 pub mod mpc;
 pub mod payment;
+pub mod refund;
 pub mod session;
 #[cfg(test)]
 mod testing;

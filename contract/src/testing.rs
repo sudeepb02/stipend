@@ -8,6 +8,7 @@ use near_sdk::{Gas, NearToken, testing_env};
 use crate::Stipend;
 use crate::asset::Asset;
 use crate::budget::{Budget, BudgetLimits};
+use crate::mpc::{AffinePoint, MpcSignature, Scalar};
 
 pub const CONTRACT_ID: &str = "stipend.testnet";
 pub const ORACLE_ID: &str = "oracle.testnet";
@@ -126,4 +127,25 @@ pub fn function_call(receipt: &Receipt) -> (String, Value, NearToken, Gas) {
         *attached_deposit,
         *prepaid_gas,
     )
+}
+
+// Receipt sent to an account
+pub fn receipt_to<'a>(receipts: &'a [Receipt], receiver: &str) -> &'a Receipt {
+    receipts
+        .iter()
+        .find(|receipt| receipt.receiver_id.as_str() == receiver)
+        .unwrap()
+}
+
+// MPC sign reply with r = 0x1111.. and s = 0x2222..
+pub fn sample_reply() -> MpcSignature {
+    MpcSignature {
+        big_r: AffinePoint {
+            affine_point: format!("03{}", "11".repeat(32)),
+        },
+        s: Scalar {
+            scalar: "22".repeat(32),
+        },
+        recovery_id: 0,
+    }
 }
