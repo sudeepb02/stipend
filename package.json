@@ -8,7 +8,7 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "build:contract": "cd contract && cargo build --target wasm32-unknown-unknown --release",
+    "build:contract": "cd contract && RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --release",
     "test:contract": "cd contract && cargo test",
     "setup:testnet": "node demo/setup-testnet.ts",
     "typecheck": "tsc"

@@ -4,13 +4,13 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { KeyPair } from "near-api-js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
-const FAUCET_URL = "https://helper.testnet.near.org/account";
+const FAUCET_URL = "https://helper.nearprotocol.com/account";
 const ENV_PATH = new URL("../.env", import.meta.url);
 const ENV_EXAMPLE_PATH = new URL("../.env.example", import.meta.url);
 
 type NearAccount = { accountId: string; secretKey: string };
 
-// Creates a funded testnet account through the faucet helper
+// Creates a funded testnet account through NEAR's testnet faucet service
 async function createNearAccount(namePrefix: string): Promise<NearAccount> {
   const keyPair = KeyPair.fromRandom("ed25519");
   const accountId = `${namePrefix}-${randomBytes(4).toString("hex")}.testnet`;
