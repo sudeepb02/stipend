@@ -11,14 +11,22 @@
     "build:contract": "cd contract && RUSTFLAGS='-C link-arg=-s' cargo build --target wasm32-unknown-unknown --release",
     "test:contract": "cd contract && cargo test",
     "deploy": "npm run build:contract && node --env-file=.env demo/deploy.ts",
+    "paid-api": "node --env-file=.env demo/paid-api/server.ts",
+    "pay-with-wallet": "node --env-file=.env demo/paid-api/pay-with-wallet.ts",
     "setup:testnet": "node demo/setup-testnet.ts",
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@x402/core": "2.29.0",
+    "@x402/evm": "2.29.0",
+    "@x402/express": "2.29.0",
+    "@x402/fetch": "2.29.0",
+    "express": "5.3.0",
     "near-api-js": "7.4.0",
     "viem": "2.57.13"
   },
   "devDependencies": {
+    "@types/express": "5.0.6",
     "@types/node": "22.20.5",
     "typescript": "7.0.2"
   }
