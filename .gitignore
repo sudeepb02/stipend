@@ -1,0 +1,16 @@
+# Rust
+target/
+
+# Node
+node_modules/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# OS, editor and tool files
+.DS_Store
+.claude/
+.idea
+.vscode
