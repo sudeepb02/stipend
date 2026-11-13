@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod budget;
 pub mod eip3009;
 pub mod hex;
 pub mod session;
@@ -6,6 +7,7 @@ pub mod session;
 mod testing;
 
 use asset::Asset;
+use budget::Budget;
 use eip3009::{TokenDomain, TransferArgs};
 use near_sdk::state::ContractState;
 use near_sdk::store::LookupMap;
@@ -66,6 +68,10 @@ pub struct Stipend {
     config: Config,
     assets: LookupMap<String, Asset>,
     sessions: LookupMap<AccountId, Session>,
+    budgets: LookupMap<u64, Budget>,
+    // Budget ids of each job
+    job_budgets: LookupMap<String, Vec<u64>>,
+    next_budget_id: u64,
 }
 
 #[near]
@@ -91,6 +97,9 @@ impl Stipend {
             },
             assets: LookupMap::new(b"a"),
             sessions: LookupMap::new(b"s"),
+            budgets: LookupMap::new(b"b"),
+            job_budgets: LookupMap::new(b"j"),
+            next_budget_id: 0,
         }
     }
 

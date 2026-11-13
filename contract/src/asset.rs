@@ -55,16 +55,19 @@ impl Stipend {
 mod tests {
     use super::*;
     use crate::eip3009;
-    use crate::testing::{CONTRACT_ID, NO_DEPOSIT, ONE_YOCTO, call_as, new_contract, usdc_asset};
-
-    const ASSET_ID: &str = "usdc-base-sepolia";
+    use crate::testing::{
+        CONTRACT_ID, NO_DEPOSIT, ONE_YOCTO, USDC_ASSET_ID, call_as, new_contract, usdc_asset,
+    };
 
     #[test]
     fn register_asset_stores_the_asset() {
         let mut contract = new_contract();
         call_as(CONTRACT_ID, ONE_YOCTO);
-        contract.register_asset(ASSET_ID.to_string(), usdc_asset());
-        assert_eq!(contract.get_asset(ASSET_ID.to_string()), Some(usdc_asset()));
+        contract.register_asset(USDC_ASSET_ID.to_string(), usdc_asset());
+        assert_eq!(
+            contract.get_asset(USDC_ASSET_ID.to_string()),
+            Some(usdc_asset())
+        );
     }
 
     #[test]
@@ -78,7 +81,7 @@ mod tests {
     fn register_asset_rejects_other_callers() {
         let mut contract = new_contract();
         call_as("someone.testnet", ONE_YOCTO);
-        contract.register_asset(ASSET_ID.to_string(), usdc_asset());
+        contract.register_asset(USDC_ASSET_ID.to_string(), usdc_asset());
     }
 
     #[test]
@@ -86,7 +89,7 @@ mod tests {
     fn register_asset_requires_one_yocto() {
         let mut contract = new_contract();
         call_as(CONTRACT_ID, NO_DEPOSIT);
-        contract.register_asset(ASSET_ID.to_string(), usdc_asset());
+        contract.register_asset(USDC_ASSET_ID.to_string(), usdc_asset());
     }
 
     #[test]
@@ -94,8 +97,8 @@ mod tests {
     fn register_asset_rejects_a_used_id() {
         let mut contract = new_contract();
         call_as(CONTRACT_ID, ONE_YOCTO);
-        contract.register_asset(ASSET_ID.to_string(), usdc_asset());
-        contract.register_asset(ASSET_ID.to_string(), usdc_asset());
+        contract.register_asset(USDC_ASSET_ID.to_string(), usdc_asset());
+        contract.register_asset(USDC_ASSET_ID.to_string(), usdc_asset());
     }
 
     #[test]
@@ -105,7 +108,7 @@ mod tests {
         call_as(CONTRACT_ID, ONE_YOCTO);
         let mut asset = usdc_asset();
         asset.token = "0x036CbD53".to_string();
-        contract.register_asset(ASSET_ID.to_string(), asset);
+        contract.register_asset(USDC_ASSET_ID.to_string(), asset);
     }
 
     #[test]

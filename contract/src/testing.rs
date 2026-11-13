@@ -9,6 +9,7 @@ use crate::asset::Asset;
 pub const CONTRACT_ID: &str = "stipend.testnet";
 pub const ORACLE_ID: &str = "oracle.testnet";
 pub const MPC_SIGNER_ID: &str = "v1.signer-prod.testnet";
+pub const USDC_ASSET_ID: &str = "usdc-base-sepolia";
 pub const NO_DEPOSIT: NearToken = NearToken::from_yoctonear(0);
 pub const ONE_YOCTO: NearToken = NearToken::from_yoctonear(1);
 // Block time of every test call, in Unix seconds
@@ -50,4 +51,12 @@ pub fn usdc_asset() -> Asset {
         version: "2".to_string(),
         decimals: 6,
     }
+}
+
+// Contract with USDC on Base Sepolia registered by the owner
+pub fn contract_with_usdc() -> Stipend {
+    let mut contract = new_contract();
+    call_as(CONTRACT_ID, ONE_YOCTO);
+    contract.register_asset(USDC_ASSET_ID.to_string(), usdc_asset());
+    contract
 }
