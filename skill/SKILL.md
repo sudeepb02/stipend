@@ -45,7 +45,7 @@ Fetches the URL with GET. If it answers 402, the CLI pays from the budget (defau
 it again. The content goes to stdout. The receipt goes to stderr:
 
 ```
-Signed on NEAR: https://testnet.nearblocks.io/txns/<hash>
+Signed 0.01 USDC on NEAR: https://testnet.nearblocks.io/txns/<hash>
 HTTP 200
 Paid from budget/3 (0x...): https://sepolia.basescan.org/tx/<hash>
 ```
@@ -62,6 +62,10 @@ The CLI pays at most 0.01 USDC per call. A URL that does not answer 402 is fetch
 6. Never ask the user for a private key, a seed phrase or a signature, and never print your session file.
 
 ## Refusals
+
+If the API answers 402 again after the CLI signed (`Payment not accepted: <reason>`), the payment did
+not settle and no USDC moved, but the signed amount still counts as spent for your seat. Report it
+and retry that URL at most once.
 
 The contract refuses a payment with one of these messages. Report it and continue without that data.
 

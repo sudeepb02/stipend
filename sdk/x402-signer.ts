@@ -15,8 +15,8 @@ export type X402SignerOptions = {
   domain: TokenDomain;
   // URL the payments are for, logged with each payment
   resource: string;
-  // Receives the hash of each NEAR transaction that signs a payment
-  onSigned?: (transactionHash: string) => void;
+  // Receives the hash of each NEAR transaction that signs a payment, and the payment's value
+  onSigned?: (transactionHash: string, value: bigint) => void;
 };
 
 // Plugs into ExactEvmScheme from @x402/evm, which asks for one signature per payment
@@ -47,7 +47,7 @@ export function createX402Signer(options: X402SignerOptions): ClientEvmSigner {
         nonce: String(message.nonce),
       };
       const { signature, transactionHash } = await payFromBudget(account, contractId, budgetId, transfer, resource);
-      onSigned?.(transactionHash);
+      onSigned?.(transactionHash, BigInt(transfer.value));
       return signature;
     },
   };

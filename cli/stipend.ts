@@ -2,12 +2,13 @@
 // budget as the agent's session account
 import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from "@x402/fetch";
 import { Account, JsonRpcProvider, KeyPair, type KeyPairString } from "near-api-js";
 import { formatUnits } from "viem";
 import { deriveEvmAddress } from "../sdk/address.ts";
-import { readAsset, readBudget, readBudgetDomain, type Budget } from "../sdk/budget.ts";
+import { readAsset, readBudget, tokenDomain, type Budget } from "../sdk/budget.ts";
 import { createX402Signer } from "../sdk/x402-signer.ts";
 
 const MAX_PAYMENT = "$0.01";
@@ -118,10 +119,12 @@ async function statusCommand(wallet: Wallet): Promise<void> {
 async function fetchCommand(wallet: Wallet, url: string, budgetId: string): Promise<void> {
   const { provider, contractId, signerId, account } = wallet;
   const path = `budget/${budgetId}`;
-  const [address, domain] = await Promise.all([
+  const budget = await readBudget(provider, contractId, budgetId);
+  const [address, asset] = await Promise.all([
     deriveEvmAddress(provider, signerId, contractId, path),
-    readBudgetDomain(provider, contractId, budgetId),
+    readAsset(provider, contractId, budget.asset_id),
   ]);
+  const domain = tokenDomain(asset);
 
   const signer = createX402Signer({
     account,
@@ -130,7 +133,10 @@ async function fetchCommand(wallet: Wallet, url: string, budgetId: string): Prom
     address,
     domain,
     resource: url,
-    onSigned: (transactionHash) => console.error(`Signed on NEAR: ${NEAR_EXPLORER_TX_URL}/${transactionHash}`),
+    onSigned: (transactionHash, value) => {
+      const amount = `${formatUnits(value, asset.decimals)} ${asset.name}`;
+      console.error(`Signed ${amount} on NEAR: ${NEAR_EXPLORER_TX_URL}/${transactionHash}`);
+    },
   });
   // Pays only on the chain of the budget's token
   const client = new x402Client()
@@ -140,6 +146,12 @@ async function fetchCommand(wallet: Wallet, url: string, budgetId: string): Prom
 
   console.log(await response.text());
   console.error(`HTTP ${response.status}`);
+  // A 402 after paying means the API did not accept the signed payment, or could not settle it
+  const paymentRequiredHeader = response.headers.get("PAYMENT-REQUIRED");
+  if (response.status === 402 && paymentRequiredHeader) {
+    const { error } = decodePaymentRequiredHeader(paymentRequiredHeader);
+    console.error(`Payment not accepted: ${error ?? "no reason given"}`);
+  }
   const paymentHeader = response.headers.get("PAYMENT-RESPONSE");
   if (paymentHeader) {
     const settlement = decodePaymentResponseHeader(paymentHeader);

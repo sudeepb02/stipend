@@ -10,6 +10,7 @@
   "scripts": {
     "build:contract": "cd contract && RUSTFLAGS='--cfg near -C link-arg=-s' cargo build --target wasm32-unknown-unknown --release",
     "test:contract": "cd contract && cargo test",
+    "agent": "node --env-file=.env demo/agent.ts",
     "control-plane": "node --env-file=.env demo/control-plane.ts",
     "create-budget": "node --env-file=.env demo/create-budget.ts",
     "deploy": "npm run build:contract && node --env-file=.env demo/deploy.ts",

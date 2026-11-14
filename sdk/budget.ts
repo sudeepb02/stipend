@@ -46,14 +46,8 @@ export async function readAsset(provider: JsonRpcProvider, contractId: string, a
   return asset;
 }
 
-// Domain of the budget's registered asset, the only domain the contract signs the budget's transfers in
-export async function readBudgetDomain(
-  provider: JsonRpcProvider,
-  contractId: string,
-  budgetId: string,
-): Promise<TokenDomain> {
-  const budget = await readBudget(provider, contractId, budgetId);
-  const asset = await readAsset(provider, contractId, budget.asset_id);
+// EIP-712 domain of an asset. The contract signs a budget's transfers only in its asset's domain.
+export function tokenDomain(asset: Asset): TokenDomain {
   return {
     name: asset.name,
     version: asset.version,
