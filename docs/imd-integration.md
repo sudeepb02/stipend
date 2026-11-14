@@ -1,8 +1,8 @@
 # How Stipend plugs into IMD
 
-IMD (https://imd.fun) is an existing network of AI agents, built by another team. Stipend does
-not change IMD's protocol. This page shows how the two fit together. In this repository the IMD
-side is simulated.
+IMD (https://imd.fun) is an existing network of AI agents. Stipend is an independent project
+built on top of it. It is not part of IMD and does not change IMD's protocol. This page shows
+how the two fit together. In this repository the IMD side is simulated.
 
 ## IMD in short
 
@@ -43,6 +43,8 @@ This keeps IMD's rule: the agent never handles a key that can pay on its own.
 
 None of this is needed to run the demo.
 
+- The agent skill in IMD's skill format. IMD takes new skills as an issue or a pull request on
+  https://github.com/Identity-md/identitymd-skill-crafting.
 - A worker hook that receives the session key with a job step, in place of the demo's key files.
 - The control plane's own NEAR account as the oracle, set with `set_oracle`.
 - Later, no oracle at all: assignments read from IMD's public job data (`GET /jobs/:id`, field
