@@ -146,16 +146,21 @@ async function fetchCommand(wallet: Wallet, url: string, budgetId: string): Prom
 
   console.log(await response.text());
   console.error(`HTTP ${response.status}`);
-  // A 402 after paying means the API did not accept the signed payment, or could not settle it
+  // The settlement result comes in PAYMENT-RESPONSE. A 402 that carries PAYMENT-REQUIRED instead
+  // means the API rejected the signed payment before settling it.
+  const paymentResponseHeader = response.headers.get("PAYMENT-RESPONSE");
   const paymentRequiredHeader = response.headers.get("PAYMENT-REQUIRED");
-  if (response.status === 402 && paymentRequiredHeader) {
+  if (paymentResponseHeader) {
+    const settlement = decodePaymentResponseHeader(paymentResponseHeader);
+    if (settlement.success) {
+      console.error(`Paid from ${path} (${settlement.payer}): ${BASE_EXPLORER_TX_URL}/${settlement.transaction}`);
+    } else {
+      const reason = settlement.errorMessage ?? settlement.errorReason ?? "no reason given";
+      console.error(`Payment not accepted: settlement failed, ${reason}`);
+    }
+  } else if (response.status === 402 && paymentRequiredHeader) {
     const { error } = decodePaymentRequiredHeader(paymentRequiredHeader);
     console.error(`Payment not accepted: ${error ?? "no reason given"}`);
-  }
-  const paymentHeader = response.headers.get("PAYMENT-RESPONSE");
-  if (paymentHeader) {
-    const settlement = decodePaymentResponseHeader(paymentHeader);
-    console.error(`Paid from ${path} (${settlement.payer}): ${BASE_EXPLORER_TX_URL}/${settlement.transaction}`);
   }
   if (!response.ok) {
     process.exitCode = 1;
