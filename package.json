@@ -16,11 +16,13 @@
     "deploy": "npm run build:contract && node --env-file=.env demo/deploy.ts",
     "fund-pot": "node --env-file=.env demo/fund-pot.ts",
     "paid-api": "node --env-file=.env demo/paid-api/server.ts",
-    "scenario": "node --env-file=.env demo/scenario.ts",
     "pay-with-wallet": "node --env-file=.env demo/paid-api/pay-with-wallet.ts",
+    "refund": "node --env-file=.env demo/refund.ts",
+    "scenario": "node --env-file=.env demo/scenario.ts",
     "setup:testnet": "node demo/setup-testnet.ts",
     "stipend": "node --env-file=.env cli/stipend.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "verify": "node --env-file=.env.example --env-file-if-exists=.env demo/verify.ts"
   },
   "dependencies": {
     "@x402/core": "2.29.0",
