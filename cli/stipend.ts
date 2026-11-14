@@ -12,8 +12,9 @@ import { readAsset, readBudget, tokenDomain, type Budget } from "../sdk/budget.t
 import { createX402Signer } from "../sdk/x402-signer.ts";
 
 const MAX_PAYMENT = "$0.01";
-const NEAR_EXPLORER_TX_URL = "https://testnet.nearblocks.io/txns";
-const BASE_EXPLORER_TX_URL = "https://sepolia.basescan.org/tx";
+// Explorer links of the receipts: the testnet explorers, unless the environment names others
+const NEAR_EXPLORER_TX_URL = process.env.NEAR_EXPLORER_TX_URL ?? "https://testnet.nearblocks.io/txns";
+const BASE_EXPLORER_TX_URL = process.env.BASE_EXPLORER_TX_URL ?? "https://sepolia.basescan.org/tx";
 const USAGE = "Usage: npm run stipend -- status | fetch <url> [--budget <id>] [--session <file>]";
 
 type Session = { job_id: string; seat_id: string; expires_at: string };

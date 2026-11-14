@@ -12,6 +12,7 @@ sessions/
 .env
 .env.*
 !.env.example
+!.env.mainnet.example
 
 # OS, editor and tool files
 .DS_Store
