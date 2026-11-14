@@ -17,7 +17,7 @@
     "paid-api": "node --env-file=.env demo/paid-api/server.ts",
     "pay-with-wallet": "node --env-file=.env demo/paid-api/pay-with-wallet.ts",
     "setup:testnet": "node demo/setup-testnet.ts",
-    "stipend": "node --env-file=.env --env-file-if-exists=.env.session cli/stipend.ts",
+    "stipend": "node --env-file=.env cli/stipend.ts",
     "typecheck": "tsc"
   },
   "dependencies": {

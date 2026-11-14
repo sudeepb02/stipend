@@ -19,12 +19,13 @@ Do not use it for anything that is not part of the task you were given.
 
 ## Setup
 
-The control plane gives you a session: the key is in `.env.session`, next to `.env` with the
-contract and RPC settings. Run the commands from the repository root.
+The control plane gives you a session key file for your seat, such as `.env.session.1`, next to
+`.env` with the contract and RPC settings. Pass it to every command with `--session`, and run the
+commands from the repository root.
 
 ## Commands
 
-### `npm run stipend -- status`
+### `npm run stipend -- status --session <file>`
 
 Run this before paying. It prints your seat, your job, whether your session is live, and for
 each budget of your job: its state, its limits and what your seat can spend now.
@@ -38,7 +39,7 @@ Budget 3: open until 2026-11-15T08:00:00.000Z
 
 Pay only from a budget whose "can spend" is at least the price.
 
-### `npm run stipend -- fetch <url> [--budget <id>]`
+### `npm run stipend -- fetch <url> [--budget <id>] --session <file>`
 
 Fetches the URL with GET. If it answers 402, the CLI pays from the budget (default 0) and fetches
 it again. The content goes to stdout. The receipt goes to stderr:
@@ -58,7 +59,7 @@ The CLI pays at most 0.01 USDC per call. A URL that does not answer 402 is fetch
 3. Pay once per piece of data. Reuse content you already fetched instead of fetching it again.
 4. Do not retry a refused payment with other values. A refusal is the budget's answer.
 5. End your task output with a spend list: each paid URL, the amount, and both receipt links.
-6. Never ask the user for a private key, a seed phrase or a signature, and never print `.env.session`.
+6. Never ask the user for a private key, a seed phrase or a signature, and never print your session file.
 
 ## Refusals
 

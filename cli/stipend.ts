@@ -1,5 +1,6 @@
 // Agent wallet CLI: shows the agent's budgets and fetches x402-paid URLs, paying from a Stipend
 // budget as the agent's session account
+import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { decodePaymentResponseHeader, wrapFetchWithPayment, x402Client } from "@x402/fetch";
@@ -12,7 +13,7 @@ import { createX402Signer } from "../sdk/x402-signer.ts";
 const MAX_PAYMENT = "$0.01";
 const NEAR_EXPLORER_TX_URL = "https://testnet.nearblocks.io/txns";
 const BASE_EXPLORER_TX_URL = "https://sepolia.basescan.org/tx";
-const USAGE = "Usage: npm run stipend -- status | fetch <url> [--budget <id>]";
+const USAGE = "Usage: npm run stipend -- status | fetch <url> [--budget <id>] [--session <file>]";
 
 type Session = { job_id: string; seat_id: string; expires_at: string };
 type Share = { reserved: string; spent: string };
@@ -20,13 +21,17 @@ type Share = { reserved: string; spent: string };
 // Contract and MPC signer ids, and the session account that signs payments
 type Wallet = { provider: JsonRpcProvider; contractId: string; signerId: string; account: Account };
 
-function loadWallet(): Wallet {
+// Reads the session key from STIPEND_SESSION_KEY, or else from the session file
+function loadWallet(sessionFile: string): Wallet {
+  if (!process.env.STIPEND_SESSION_KEY && existsSync(sessionFile)) {
+    process.loadEnvFile(sessionFile);
+  }
   const { NEAR_RPC_URL, NEAR_SIGNER_ID, STIPEND_CONTRACT_ID, STIPEND_SESSION_KEY } = process.env;
   if (!NEAR_RPC_URL || !NEAR_SIGNER_ID || !STIPEND_CONTRACT_ID) {
     throw new Error("Set NEAR_RPC_URL, NEAR_SIGNER_ID and STIPEND_CONTRACT_ID in .env");
   }
   if (!STIPEND_SESSION_KEY) {
-    throw new Error("Set STIPEND_SESSION_KEY, or run npm run control-plane to create .env.session");
+    throw new Error(`No session key in ${sessionFile}. Run npm run control-plane to create one.`);
   }
   const provider = new JsonRpcProvider({ url: NEAR_RPC_URL });
   // A session account is an implicit account: its id is the hex of its ed25519 public key
@@ -145,17 +150,20 @@ async function fetchCommand(wallet: Wallet, url: string, budgetId: string): Prom
   }
 }
 
-// Usage: npm run stipend -- status | fetch <url> [--budget <id>]
+// Usage: npm run stipend -- status | fetch <url> [--budget <id>] [--session <file>]
 async function main(): Promise<void> {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
-    options: { budget: { type: "string", default: "0" } },
+    options: {
+      budget: { type: "string", default: "0" },
+      session: { type: "string", default: ".env.session" },
+    },
   });
   const [command, url] = positionals;
   if (command === "status" && positionals.length === 1) {
-    await statusCommand(loadWallet());
+    await statusCommand(loadWallet(values.session));
   } else if (command === "fetch" && url && /^\d+$/.test(values.budget)) {
-    await fetchCommand(loadWallet(), url, values.budget);
+    await fetchCommand(loadWallet(values.session), url, values.budget);
   } else {
     throw new Error(USAGE);
   }
