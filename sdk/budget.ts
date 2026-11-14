@@ -1,4 +1,4 @@
-// Reads the token a Stipend budget pays in
+// Reads Stipend budgets and the token they pay in
 import type { JsonRpcProvider } from "near-api-js";
 import type { Address } from "viem";
 
@@ -10,16 +10,24 @@ export type TokenDomain = {
   verifyingContract: Address;
 };
 
-// Asset fields as the contract returns them
-type Asset = { chain_id: string; token: Address; name: string; version: string };
+// Budget fields as the contract returns them, amounts in the token's smallest unit
+export type Budget = {
+  job_id: string;
+  funder: string;
+  asset_id: string;
+  limits: { total: string; per_agent_cap: string; per_payment_max: string };
+  payees: string[] | null;
+  expires_at: string;
+  closed_at: string | null;
+  reserved_total: string;
+  spent_total: string;
+  payment_count: number;
+};
 
-// Domain of the budget's registered asset, the only domain the contract signs the budget's transfers in
-export async function readBudgetDomain(
-  provider: JsonRpcProvider,
-  contractId: string,
-  budgetId: string,
-): Promise<TokenDomain> {
-  const budget = await provider.callFunction<{ asset_id: string }>({
+export type Asset = { chain_id: string; token: Address; name: string; version: string; decimals: number };
+
+export async function readBudget(provider: JsonRpcProvider, contractId: string, budgetId: string): Promise<Budget> {
+  const budget = await provider.callFunction<Budget>({
     contractId,
     method: "get_budget",
     args: { budget_id: budgetId },
@@ -27,14 +35,25 @@ export async function readBudgetDomain(
   if (!budget) {
     throw new Error(`No budget ${budgetId} on ${contractId}`);
   }
-  const asset = await provider.callFunction<Asset>({
-    contractId,
-    method: "get_asset",
-    args: { asset_id: budget.asset_id },
-  });
+  return budget;
+}
+
+export async function readAsset(provider: JsonRpcProvider, contractId: string, assetId: string): Promise<Asset> {
+  const asset = await provider.callFunction<Asset>({ contractId, method: "get_asset", args: { asset_id: assetId } });
   if (!asset) {
-    throw new Error(`Asset ${budget.asset_id} is not registered on ${contractId}`);
+    throw new Error(`Asset ${assetId} is not registered on ${contractId}`);
   }
+  return asset;
+}
+
+// Domain of the budget's registered asset, the only domain the contract signs the budget's transfers in
+export async function readBudgetDomain(
+  provider: JsonRpcProvider,
+  contractId: string,
+  budgetId: string,
+): Promise<TokenDomain> {
+  const budget = await readBudget(provider, contractId, budgetId);
+  const asset = await readAsset(provider, contractId, budget.asset_id);
   return {
     name: asset.name,
     version: asset.version,
