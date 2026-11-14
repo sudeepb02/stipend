@@ -1,20 +1,16 @@
 // Scripted research agent that follows skill/SKILL.md with the stipend CLI: it checks what its seat
 // can spend, buys token and protocol data from the paid API, and writes a markdown report that ends
 // with its spend list
-import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { parseArgs } from "node:util";
 import { formatUnits, parseUnits } from "viem";
+import { runScript, type ScriptResult } from "./run-script.ts";
 
-const REPO_DIR = fileURLToPath(new URL("..", import.meta.url));
 const USAGE =
   "Usage: npm run agent -- --session <file> --budget <id> --coin <coin> --protocol <slug> --out <file> [--api <url>]";
 // Enough digits to subtract any amount the status command prints
 const AMOUNT_DECIMALS = 18;
-
-type CliResult = { ok: boolean; stdout: string; stderr: string };
 
 // A paid URL with the CLI's receipt, and the reason when the data was not bought
 type Purchase = {
@@ -33,7 +29,6 @@ type PriceData = { coins?: Record<string, { symbol: string; price: number; times
 type ChartData = { coins?: Record<string, { prices: { timestamp: number; price: number }[] }> };
 type TvlData = { protocol: string; tvl_usd: number };
 
-const runFile = promisify(execFile);
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 4 });
 const compactUsd = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -43,16 +38,8 @@ const compactUsd = new Intl.NumberFormat("en-US", {
 });
 
 // Runs the stipend CLI from the repository root, as the skill tells an agent to
-async function stipend(args: string[]): Promise<CliResult> {
-  try {
-    const { stdout, stderr } = await runFile("node", ["--env-file=.env", "cli/stipend.ts", ...args], {
-      cwd: REPO_DIR,
-    });
-    return { ok: true, stdout, stderr };
-  } catch (error) {
-    const { stdout = "", stderr = "" } = error as { stdout?: string; stderr?: string };
-    return { ok: false, stdout, stderr };
-  }
+function stipend(args: string[]): Promise<ScriptResult> {
+  return runScript("cli/stipend.ts", args);
 }
 
 // Reads "  seat 1: spent 0.03 USDC, can spend 0.22 USDC", two lines below the budget's line

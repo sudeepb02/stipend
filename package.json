@@ -16,6 +16,7 @@
     "deploy": "npm run build:contract && node --env-file=.env demo/deploy.ts",
     "fund-pot": "node --env-file=.env demo/fund-pot.ts",
     "paid-api": "node --env-file=.env demo/paid-api/server.ts",
+    "scenario": "node --env-file=.env demo/scenario.ts",
     "pay-with-wallet": "node --env-file=.env demo/paid-api/pay-with-wallet.ts",
     "setup:testnet": "node demo/setup-testnet.ts",
     "stipend": "node --env-file=.env cli/stipend.ts",
