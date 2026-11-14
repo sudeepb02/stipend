@@ -89,7 +89,7 @@ async function startPaidApi(apiUrl: string): Promise<ChildProcess | undefined> {
   if (await isAnswering(apiUrl)) {
     return undefined;
   }
-  const server = spawn("node", ["--env-file=.env", "demo/paid-api/server.ts"], { cwd: REPO_DIR, stdio: "ignore" });
+  const server = spawn("node", ["--env-file=.env", "demo-testnet/paid-api/server.ts"], { cwd: REPO_DIR, stdio: "ignore" });
   for (let attempt = 0; attempt < 30; attempt++) {
     await sleep(1000);
     if (await isAnswering(apiUrl)) {
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   const server = await startPaidApi(apiUrl);
   try {
     printStep(`1. The funder opens a ${BUDGET_TOTAL} USDC budget for job ${jobId}`);
-    const created = await runStep("demo/create-budget.ts", [
+    const created = await runStep("demo-testnet/create-budget.ts", [
       jobId,
       BUDGET_TOTAL,
       PER_AGENT_CAP,
@@ -179,18 +179,18 @@ async function main(): Promise<void> {
     const [potBefore, payeeBefore] = await Promise.all([usdcBalance(pot), usdcBalance(payTo)]);
 
     printStep(`2. The funder moves ${BUDGET_TOTAL} test USDC into the budget's pot`);
-    await runStep("demo/fund-pot.ts", [`budget/${budgetId}`, BUDGET_TOTAL]);
+    await runStep("demo-testnet/fund-pot.ts", [`budget/${budgetId}`, BUDGET_TOTAL]);
 
     printStep("3. The control plane assigns two agents to the job");
     const seatIds = AGENTS.map((agent) => agent.seatId);
-    await runStep("demo/control-plane.ts", [jobId, ...seatIds, "--hours", SESSION_HOURS, "--dir", sessionDir]);
+    await runStep("demo-testnet/control-plane.ts", [jobId, ...seatIds, "--hours", SESSION_HOURS, "--dir", sessionDir]);
 
     printStep("4. Each agent researches its topic and pays through the CLI");
     for (const agent of AGENTS) {
       const reportFile = join("reports", `${jobId}-seat-${agent.seatId}.md`);
       const walletArgs = ["--session", keyFile(agent.seatId), "--budget", budgetId];
       const topicArgs = ["--coin", agent.coin, "--protocol", agent.protocol, "--out", reportFile];
-      await runStep("demo/agent.ts", [...walletArgs, ...topicArgs]);
+      await runStep("demo-testnet/agent.ts", [...walletArgs, ...topicArgs]);
     }
 
     printStep("5. Payments that break the rules");

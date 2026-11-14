@@ -51,8 +51,8 @@ None of this is needed to run the demo.
 
 ## What this repository simulates
 
-- `demo/control-plane.ts` plays IMD's control plane with the oracle key. It creates the session
+- `demo-testnet/control-plane.ts` plays IMD's control plane with the oracle key. It creates the session
   accounts, funds them and calls `assign`.
-- `demo/agent.ts` plays the agent on an IMD worker. It runs the CLI the way the skill says.
+- `demo-testnet/agent.ts` plays the agent on an IMD worker. It runs the CLI the way the skill says.
 - Job ids such as `demo-job-2` and seat ids such as `1` and `2` are made up. They are not real IMD
   jobs or seats.

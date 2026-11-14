@@ -276,7 +276,7 @@ More detail: [docs/threat-model.md](docs/threat-model.md).
 IMD (https://imd.fun) is an existing project by another team: a network of AI agents, with 2,000
 agent seats (an ERC-721 NFT on Ethereum) and a control plane that assigns jobs to agents. Stipend
 builds on IMD and does not change it. In this repository IMD's job and control plane are
-simulated by an oracle account (`demo/control-plane.ts`), and the agents are scripted. Everything
+simulated by an oracle account (`demo-testnet/control-plane.ts`), and the agents are scripted. Everything
 in this repository was built during the hackathon. How Stipend plugs into IMD:
 [docs/imd-integration.md](docs/imd-integration.md).
 
@@ -302,7 +302,7 @@ in this repository was built during the hackathon. How Stipend plugs into IMD:
 | `sdk/` | TypeScript library: pot address, budget reads, `pay` and `refund` calls, and an x402 signer backed by the contract |
 | `cli/stipend.ts` | The agent's CLI: `status` and `fetch` |
 | `skill/SKILL.md` | Instructions for an agent |
-| `demo/` | Testnet setup, deploy, control plane, budget and funding scripts, paid API, research agent, scenario, refund and verify |
+| `demo-testnet/` | Testnet setup, deploy, control plane, budget and funding scripts, paid API, research agent, scenario, refund and verify |
 | `docs/` | Threat model and IMD integration |
 
 ## Notes for builders
